@@ -5,6 +5,6 @@ namespace StatefulWorkers
    class Program
    {
       private static void Main(string[] _) =>
-         ActorSystem.Create("globomantics").WhenTerminated.Wait();
+         ActorSystem.Create("MyActorSystem").WhenTerminated.Wait();
    }
 }
