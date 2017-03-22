@@ -1,5 +1,6 @@
 using Akka.Actor;
 using Akka.Routing;
+using Shared;
 
 namespace API
 {

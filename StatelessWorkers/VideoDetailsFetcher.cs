@@ -1,19 +1,20 @@
 ﻿using System;
 using Akka.Actor;
-using API.Domain;
+using Shared;
+using Shared.Domain;
 
-namespace API.StatelessWorkers
+namespace StatelessWorkers
 {
    /// <summary>
    /// Request to see which videos have not been viewed by a user
    /// </summary>
-   internal class UnwatchedVideosRequest
+   public class UnseenVideosRequest
    {
       public RecommendationJob Job { get; }
 
       public int[] PreviouslySeenVideoIds { get; }
 
-      public UnwatchedVideosRequest(RecommendationJob job, int[] previouslySeenVideoIds)
+      public UnseenVideosRequest(RecommendationJob job, int[] previouslySeenVideoIds)
       {
          Job = job;
          PreviouslySeenVideoIds = previouslySeenVideoIds;
@@ -23,13 +24,13 @@ namespace API.StatelessWorkers
    /// <summary>
    /// Response containing which videos have not been viewed by a user
    /// </summary>
-   internal class UnwatchedVideosResponse
+   public class UnseenVideosResponse
    {
       public RecommendationJob Job { get; }
 
       public Video[] UnseenVideos { get; }
 
-      public UnwatchedVideosResponse(RecommendationJob job, Video[] unseenVideos)
+      public UnseenVideosResponse(RecommendationJob job, Video[] unseenVideos)
       {
          Job = job;
          UnseenVideos = unseenVideos;
@@ -40,7 +41,7 @@ namespace API.StatelessWorkers
    /// Actor which wraps remote API calls to fetch details of videos
    /// Only allows one in-flight request at once
    /// </summary>
-   internal class VideoDetailsFetcher : ReceiveActor, IWithUnboundedStash
+   public class VideoDetailsFetcher : ReceiveActor, IWithUnboundedStash
    {
       private readonly RemoteAPI _remoteAPI = new RemoteAPI();
 
@@ -54,13 +55,13 @@ namespace API.StatelessWorkers
 
       private void Ready()
       {
-         Receive<UnwatchedVideosRequest>(req =>
+         Receive<UnseenVideosRequest>(req =>
          {
-            Console.WriteLine(nameof(UnwatchedVideosRequest) + $" for user {req.Job.UserId}");
+            Console.WriteLine(nameof(UnseenVideosRequest) + $" for user {req.Job.UserId}");
 
             _remoteAPI
                .GetUnseenVideosAsync(req.PreviouslySeenVideoIds)
-               .PipeTo(Self, Sender, result => new UnwatchedVideosResponse(req.Job, result));
+               .PipeTo(Self, Sender, result => new UnseenVideosResponse(req.Job, result));
 
             Become(Busy);
          });
@@ -69,7 +70,7 @@ namespace API.StatelessWorkers
       //Limit in-flight requests
       private void Busy()
       {
-         Receive<UnwatchedVideosResponse>(resp =>
+         Receive<UnseenVideosResponse>(resp =>
          {
             Sender.Tell(resp);
             GetReady();

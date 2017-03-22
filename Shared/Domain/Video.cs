@@ -1,6 +1,6 @@
 using System;
 
-namespace API.Domain
+namespace Shared.Domain
 {
    public class Video
    {

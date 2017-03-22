@@ -4,13 +4,14 @@ using System.Linq;
 using Akka;
 using Akka.Actor;
 using Akka.Persistence;
+using Shared;
 
-namespace API.StatefulWorkers
+namespace StatefulWorkers
 {
    /// <summary>
    /// Request for all the videos a user has viewed
    /// </summary>
-   internal class PreviouslyWatchedVideosRequest
+   public class PreviouslyWatchedVideosRequest
    {
       public RecommendationJob Job { get; }
 
@@ -23,16 +24,16 @@ namespace API.StatefulWorkers
    /// <summary>
    /// Response containing all videos a user has viewed
    /// </summary>
-   internal class PreviouslyWatchedVideosResponse
+   public class PreviouslyWatchedVideosResponse
    {
       public RecommendationJob Job { get; }
 
-      public int[] PreviouslySeenVideoIds { get; }
+      public int[] PreviouslyWatchedVideoIds { get; }
 
-      public PreviouslyWatchedVideosResponse(RecommendationJob job, int[] previouslySeenVideoIds)
+      public PreviouslyWatchedVideosResponse(RecommendationJob job, int[] previouslyWatchedVideoIds)
       {
          Job = job;
-         PreviouslySeenVideoIds = previouslySeenVideoIds;
+         PreviouslyWatchedVideoIds = previouslyWatchedVideoIds;
       }
    }
 
@@ -41,7 +42,7 @@ namespace API.StatefulWorkers
    /// Durable store of which users have viewed which videos
    /// Can be queried for which videos a user has viewed
    /// </summary>
-   internal class VideosWatchedStore : PersistentActor//Part of Akka.Persistence
+   public class VideosWatchedStore : PersistentActor//Part of Akka.Persistence
    {
       private List<VideoWatchedEvent> _store = new List<VideoWatchedEvent>();
 
@@ -58,7 +59,7 @@ namespace API.StatefulWorkers
             .With<VideoWatchedEvent>(view => _store.Add(view))
             .With<SnapshotOffer>(offer =>
             {
-               _store = (List<VideoWatchedEvent>)offer.Snapshot;
+               _store = (List<VideoWatchedEvent>) offer.Snapshot;
                Console.WriteLine($"Recovered state with {_store.Count} views");
             })
             .WasHandled;

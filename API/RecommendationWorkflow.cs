@@ -4,132 +4,117 @@ using System.Linq;
 using Akka.Actor;
 using Akka.Routing;
 using API.Helpers;
-using API.StatefulWorkers;
-using API.StatelessWorkers;
+using Shared;
+using StatefulWorkers;
+using StatelessWorkers;
 
 namespace API
 {
-   /// <summary>
-   /// Initiates the recommendation workflow for a user
-   /// </summary>
-   internal class RecommendationJob
-   {
-      public int UserId { get; }
+    /// <summary>
+    /// Performs all the collaboration required to create a recommendation.
+    /// One recommendation per actor, lives for the lifetime of the lifecycle
+    /// 
+    /// 1. Wait until all required actors are up
+    /// 2. Query view store for previously viewed videos
+    /// 3. Query video details fetcher for unseen videos
+    /// 4. Build and send recommendation
+    /// </summary>
+    internal class RecommendationWorkflow : ReceiveActor
+    {
+        private class BeginAttempt
+        {
+            public RecommendationJob Job { get; }
 
-      public IActorRef Client { get; }
+            public BeginAttempt(RecommendationJob job)
+            {
+                Job = job;
+            }
+        }
 
-      public RecommendationJob(int userId, IActorRef client)
-      {
-         UserId = userId;
-         Client = client;
-      }
-   }
+        private class JobAttempt
+        {
+            public RecommendationJob Job { get; }
 
-   /// <summary>
-   /// Performs all the collaboration required to create a recommendation.
-   /// One recommendation per actor, lives for the lifetime of the lifecycle
-   /// 
-   /// 1. Wait until all required actors are up
-   /// 2. Query view store for previously viewed videos
-   /// 3. Query video details fetcher for unseen videos
-   /// 4. Build and send recommendation
-   /// </summary>
-   internal class RecommendationWorkflow : ReceiveActor
-   {
-      private class BeginAttempt
-      {
-         public RecommendationJob Job { get; }
+            public bool CanStart { get; }
 
-         public BeginAttempt(RecommendationJob job)
-         {
-            Job = job;
-         }
-      }
+            public JobAttempt(RecommendationJob job, bool canStart)
+            {
+                Job = job;
+                CanStart = canStart;
+            }
+        }
 
-      private class JobAttempt
-      {
-         public RecommendationJob Job { get; }
+        private readonly IActorRef _videoDetails;
+        private readonly IActorRef _viewsRepo;
+        private ICancelable _startAttempts;
 
-         public bool CanStart { get; }
+        public RecommendationWorkflow(IActorRef viewsRepo, IActorRef videoDetails)
+        {
+            _viewsRepo = viewsRepo;
+            _videoDetails = videoDetails;
 
-         public JobAttempt(RecommendationJob job, bool canStart)
-         {
-            Job = job;
-            CanStart = canStart;
-         }
-      }
-      
-      private readonly IActorRef _videoDetails;
-      private readonly IActorRef _viewsRepo;
-      private ICancelable _startAttempts;
+            AcceptingJob();
+        }
 
-      public RecommendationWorkflow(IActorRef viewsRepo, IActorRef videoDetails)
-      {
-         _viewsRepo = viewsRepo;
-         _videoDetails = videoDetails;
+        private void AcceptingJob()
+        {
+            Receive<RecommendationJob>(job =>
+            {
+                Console.WriteLine($"Starting recommendation workflow for user {job.UserId}");
 
-         AcceptingJob();
-      }
+                _startAttempts = Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(
+                   TimeSpan.Zero, TimeSpan.FromMilliseconds(200), Self, new BeginAttempt(job), ActorRefs.NoSender);
 
-      private void AcceptingJob()
-      {
-         Receive<RecommendationJob>(job =>
-         {
-            Console.WriteLine($"Starting recommendation workflow for user {job.UserId}");
+                Become(Working);
+            });
+        }
 
-            _startAttempts = Context.System.Scheduler.ScheduleTellRepeatedlyCancelable(
-               TimeSpan.Zero, TimeSpan.FromMilliseconds(200), Self, new BeginAttempt(job), ActorRefs.NoSender);
+        private void Working()
+        {
+            Receive<BeginAttempt>(begin =>
+            {
+                var viewsRoutees = _viewsRepo.Ask<Routees>(new GetRoutees());
+                var videoDetailsRoutees = _videoDetails.Ask<Routees>(new GetRoutees());
 
-            Become(Working);
-         });
-      }
+                Task.WhenAll(viewsRoutees, videoDetailsRoutees)
+                   .ContinueWith(allRoutees => new JobAttempt(begin.Job, allRoutees.Result.All(r => r.Members.Any())))
+                   .PipeTo(Self);
+                //Each router has at least one routee
+            });
 
-      private void Working()
-      {
-         Receive<BeginAttempt>(begin =>
-         {
-            var viewsRoutees = _viewsRepo.Ask<Routees>(new GetRoutees());
-            var videoDetailsRoutees = _videoDetails.Ask<Routees>(new GetRoutees());
+            Receive<JobAttempt>(attempt => !attempt.CanStart, attempt => Console.WriteLine("JobAttempt failed"));
 
-            Task.WhenAll(viewsRoutees, videoDetailsRoutees)
-               .ContinueWith(allRoutees => new JobAttempt(begin.Job, allRoutees.Result.All(r => r.Members.Any())))
-               .PipeTo(Self);
-            //Each router has at least one routee
-         });
+            Receive<JobAttempt>(attempt => attempt.CanStart, attempt =>
+            {
+                _startAttempts.Cancel();
 
-         Receive<JobAttempt>(attempt => !attempt.CanStart, attempt => Console.WriteLine("JobAttempt failed"));
+                _viewsRepo
+                   .Ask<PreviouslyWatchedVideosResponse>(new PreviouslyWatchedVideosRequest(attempt.Job), TimeSpan.FromSeconds(20))
+                   .PipeTo(Self);
+            });
 
-         Receive<JobAttempt>(attempt =>  attempt.CanStart, attempt =>
-         {
-            _startAttempts.Cancel();
+            Receive<PreviouslyWatchedVideosResponse>(resp =>
+            {
+                _videoDetails
+                   .Ask<UnseenVideosResponse>(new UnseenVideosRequest(resp.Job, resp.PreviouslyWatchedVideoIds), TimeSpan.FromSeconds(20))
+                   .PipeTo(Self);
+            });
 
-            _viewsRepo
-               .Ask<PreviouslyWatchedVideosResponse>(new PreviouslyWatchedVideosRequest(attempt.Job), TimeSpan.FromSeconds(20))
-               .PipeTo(Self);
-         });
+            Receive<UnseenVideosResponse>(unseen =>
+            {
+                var recommendedVideos = unseen.UnseenVideos
+                      .OrderByDescending(v => v.Rating)
+                      .Take(GlobomanticsConfiguration.NumberOfRecommendations)
+                      .ToArray();
 
-         Receive<PreviouslyWatchedVideosResponse>(resp =>
-         {
-            _videoDetails
-               .Ask<UnwatchedVideosResponse>(new UnwatchedVideosRequest(resp.Job, resp.PreviouslySeenVideoIds), TimeSpan.FromSeconds(20))
-               .PipeTo(Self);
-         });
+                unseen.Job.Client.Tell(new Recommendation(recommendedVideos));
 
-         Receive<UnwatchedVideosResponse>(unseen =>
-         {
-            var recommendedVideos = unseen.UnseenVideos
-                  .OrderByDescending(v => v.Rating)
-                  .Take(GlobomanticsConfiguration.NumberOfRecommendations)
-                  .ToArray();
+                //My work here is done
+                Self.Tell(PoisonPill.Instance);
+                Console.WriteLine("Workflow finished");
+            });
 
-            unseen.Job.Client.Tell(new Recommendation(recommendedVideos));
-
-            //My work here is done
-            Self.Tell(PoisonPill.Instance);
-            Console.WriteLine("Workflow finished");
-         });
-
-         Receive<Status.Failure>(f => Console.WriteLine("Error contacting other nodes"));
-      }
-   }
+            Receive<Status.Failure>(f => Console.WriteLine("Error contacting other nodes"));
+        }
+    }
 }

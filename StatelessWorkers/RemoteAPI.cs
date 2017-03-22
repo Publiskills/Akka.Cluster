@@ -1,11 +1,11 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using API.Domain;
-using static API.Domain.Genre;
+using Shared.Domain;
+using static Shared.Domain.Genre;
 using static System.TimeSpan;
 
-namespace API.StatelessWorkers
+namespace StatelessWorkers
 {
    // Shhhhh, Let's pretend this hits a 3rd party API to get video details
    public class RemoteAPI

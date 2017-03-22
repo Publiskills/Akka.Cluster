@@ -95,6 +95,10 @@
       <Project>{77A3E3D7-D903-417B-8C9B-62E9E5A8A3D6}</Project>
       <Name>API</Name>
     </ProjectReference>
+    <ProjectReference Include="..\Shared\Shared.csproj">
+      <Project>{EEC7882B-B2C0-44F7-94DB-4C5B84F76145}</Project>
+      <Name>Shared</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

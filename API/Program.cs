@@ -1,9 +1,7 @@
-﻿using System;
-using System.Linq;
-using Akka.Actor;
+﻿using Akka.Actor;
 using Akka.Routing;
-using API.StatefulWorkers;
-using API.StatelessWorkers;
+using StatefulWorkers;
+using StatelessWorkers;
 
 namespace API
 {
